@@ -121,6 +121,57 @@ steps:
 
 Das ist natürlich nur ein sehr einfaches Beispiel – alles, was du bashen kannst, kannst du so abbilden!
 
+## OpenDevin-Integration & Systemkonzept
+
+Dieses System ist als flexibler Automations-Layer gedacht, der durch die Kombination von agent_watcher.py (dem Watcher/Executor auf dem Server) und einer KI-gestützten Orchestrierung (empfohlen: OpenDevin) besonders mächtig wird.
+
+### Warum OpenDevin?
+
+OpenDevin ist ein Open-Source-Agentensystem, das DevOps- und Deployment-Aufgaben automatisieren kann.
+
+Die KI kann per natürlicher Sprache und/oder UI gezielt Aufgaben generieren, als YAML- oder Bash-Anweisungen speichern und direkt dem Watcher zur Ausführung bereitstellen.
+
+Der Agent Watcher liest diese Anweisungen automatisiert aus einem Verzeichnis (/ag666/instructions) ein, führt sie aus und schreibt die Ergebnisse/Logs zurück.
+
+**Vorteile der Integration:**
+
+- Komplett automatisierte Self-Service-DevOps-Pipeline
+- Aufgaben können per KI (OpenDevin, Claude, GPT-4o etc.) generiert, verwaltet und überwacht werden
+- Kein händisches Schreiben von Shell- oder Deployment-Skripten mehr nötig
+- Einfach erweiterbar für weitere Use-Cases (z.B. Serververwaltung, Deployments, Monitoring etc.)
+
+### System-Architektur
+
+```mermaid
+graph TD
+    subgraph KI/Orchestrator
+        A(OpenDevin, Claude etc.)
+    end
+    subgraph Server
+        B(agent_watcher.py)
+        C(YAML/Bash/Skripte)
+        D(Logs/Results)
+    end
+    A -- schreibt Tasks --> C
+    B -- liest, führt aus --> C
+    B -- speichert Ergebnis --> D
+    A -- analysiert --> D
+    A -- erstellt neue Tasks --> C
+```
+
+### Hinweise zur Nutzung
+
+Ohne OpenDevin kannst du das System auch nutzen, musst dann aber alle Tasks manuell als YAML/Bash in `/ag666/instructions` ablegen.
+
+Empfohlen: Nutze OpenDevin oder ein ähnliches Tool (z.B. Claude in Cursor), um Anweisungen KI-gestützt zu erstellen, Server-Feedback auszuwerten und die Automatisierung kontinuierlich zu verbessern.
+
+### OpenDevin installieren
+
+Eine Anleitung zur Installation von OpenDevin findest du hier:
+https://github.com/OpenDevin/OpenDevin
+
+Nach dem Setup kannst du OpenDevin so konfigurieren, dass es automatisch Aufgaben im Instructions-Ordner ablegt oder direkt mit dem Agent Watcher kommuniziert.
+
 ## Features
 
 - 🔍 Kontinuierliche Überwachung des Verzeichnisses `/ag666/instructions`
