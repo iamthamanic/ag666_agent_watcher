@@ -1,0 +1,19 @@
+# Beispiel für Dateibearbeitung mit Suchen/Ersetzen
+task: "Update API Endpoint in Konfiguration"
+actions:
+  - type: edit_file
+    file: /app/frontend/.env.production
+    search: "REACT_APP_API_URL=https://api.old-domain.com"
+    replace: "REACT_APP_API_URL=https://api.new-domain.com"
+    
+  - type: edit_file
+    file: /app/backend/config.json
+    search: '"port": 3000'
+    replace: '"port": 8080'
+    
+  # Mit Regex für komplexere Ersetzungen
+  - type: edit_file
+    file: /etc/nginx/sites-available/default
+    search: 'server_name .*;'
+    replace: 'server_name new.example.com;'
+    regex: true

@@ -1,0 +1,33 @@
+# Beispiel für komplexen Task mit mehreren Aktionen
+task: "Deploy neue Version der Applikation"
+actions:
+  # 1. Backup der aktuellen Konfiguration
+  - type: copy_file
+    source: /app/config/production.yml
+    destination: /backups/production.yml.backup
+    
+  # 2. Neue Konfiguration erstellen
+  - type: create_file
+    file: /app/config/production.yml
+    content: |
+      server:
+        port: 8080
+        host: 0.0.0.0
+      database:
+        host: db.example.com
+        port: 5432
+        
+  # 3. Git Pull für neueste Version
+  - type: run_command
+    command: "cd /app && git pull origin main"
+    timeout: 60
+    
+  # 4. Docker Container neu starten
+  - type: run_command
+    command: "docker-compose -f /app/docker-compose.yml restart"
+    timeout: 120
+    
+  # 5. Health Check
+  - type: run_command
+    command: "curl -f http://localhost:8080/health || exit 1"
+    timeout: 30

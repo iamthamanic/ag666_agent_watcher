@@ -1,0 +1,2 @@
+# Beispiel für einfachen Shell-Befehl
+command: "docker ps | grep traefik"

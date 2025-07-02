@@ -1,0 +1,8 @@
+# Beispiel für Legacy-Format (wird automatisch erkannt und konvertiert)
+task: "Passe die Ports im traefik-Service in der docker-compose.deploy.yml auf dem Server an."
+steps:
+  - "Öffne die Datei /root/-hrthis-deployment/docker-compose.deploy.yml."
+  - "Finde den Service 'traefik'."
+  - "Ändere die Zeile bei ports: so, dass jetzt 8081:80 und 8082:443 gemappt werden (statt 80:80 und 443:443)."
+  - "Speichere die Datei."
+  - "Lege eine kurze Erfolgsmeldung im Results-Ordner ab."

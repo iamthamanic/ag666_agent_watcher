@@ -1,0 +1,9 @@
+# Beispiel für strukturiertes Task-Format mit expliziten Aktionen
+task: "Update Traefik Ports in Docker Compose"
+actions:
+  - type: update_docker_compose_ports
+    file: /root/-hrthis-deployment/docker-compose.deploy.yml
+    service: traefik
+    port_mappings:
+      - "8081:80"
+      - "8082:443"
