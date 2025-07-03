@@ -19,12 +19,14 @@ Optional kannst du das System mit OpenDevin oder Claude/MCP in Cursor kombiniere
 - `/ag666/results` – Hier landen die Ergebnisse (Logs, Status, Outputs).
 - `/ag666/logs` – (Optional) Für zusätzliche Logfiles des Agenten.
 
-### agent_watcher.py
+### agent_watcher.py (v2.0)
 
 - Python-Script, das dauerhaft im Hintergrund läuft
 - Überwacht instructions und verarbeitet neue YAML-Dateien automatisch
+- **NEU in v2.0**: Führt Tasks jetzt wirklich auf dem Server aus!
 - Verhindert Doppelverarbeitung per Lock-Mechanismus
-- Ergebnisse und Fehler werden sauber geloggt
+- Automatische Backups vor allen Dateiänderungen
+- Detaillierte Ausführungslogs in den Ergebnisdateien
 
 ### OpenDevin
 
@@ -102,24 +104,53 @@ Kollegen geben YAML-Tasks vor, die dann zentral ausgeführt werden.
 **KI-gestützte Steuerung:**
 OpenDevin oder Claude generieren aus „plain English" die nötigen YAMLs und legen sie direkt im instructions-Ordner ab.
 
-## Beispiel: Deployment eines Projekts
+## Task-Formate & Beispiele
+
+### 1. Strukturiertes Format (empfohlen für v2.0)
 
 ```yaml
-task: Deploy HRthis Backend & Frontend
-steps:
-  - name: Git Pull Backend
-    run: git -C /root/-hrthis-deployment/browo-hrthis-backend pull
-  - name: Docker Compose Build
-    run: docker-compose -f /root/-hrthis-deployment/docker-compose.production.yml up -d --build
-  - name: Check Traefik Status
-    run: docker ps | grep traefik
-  - name: HTTP Check Frontend
-    run: curl -I https://hrthis.kibubot.com
-  - name: HTTP Check Backend
-    run: curl -I https://hrthis-api.kibubot.com
+task: "Update Traefik Ports"
+actions:
+  - type: update_docker_compose_ports
+    file: /root/-hrthis-deployment/docker-compose.deploy.yml
+    service: traefik
+    port_mappings:
+      - "8081:80"
+      - "8082:443"
 ```
 
-Das ist natürlich nur ein sehr einfaches Beispiel – alles, was du bashen kannst, kannst du so abbilden!
+### 2. Multi-Action Tasks
+
+```yaml
+task: "Deploy neue Version"
+actions:
+  - type: copy_file
+    source: /app/config/production.yml
+    destination: /backups/production.yml.backup
+    
+  - type: run_command
+    command: "cd /app && git pull origin main"
+    timeout: 60
+    
+  - type: run_command
+    command: "docker-compose restart"
+    timeout: 120
+```
+
+### 3. Einfacher Befehl
+
+```yaml
+command: "docker ps | grep traefik"
+```
+
+### Verfügbare Aktionstypen
+
+- **update_docker_compose_ports**: Port-Mappings in Docker-Compose-Dateien ändern
+- **run_command**: Shell-Befehle mit optionalem Timeout ausführen
+- **edit_file**: Dateien per Suchen/Ersetzen bearbeiten (mit Regex-Support)
+- **copy_file**: Dateien kopieren
+- **create_file**: Neue Dateien mit Inhalt erstellen
+- **delete_file**: Dateien löschen (erstellt automatisch Backup)
 
 ## OpenDevin-Integration & Systemkonzept
 
@@ -174,12 +205,19 @@ Nach dem Setup kannst du OpenDevin so konfigurieren, dass es automatisch Aufgabe
 
 ## Features
 
+### Version 2.0 - Echte Task-Ausführung!
+- ⚡ **NEU**: Führt Tasks jetzt wirklich auf dem Server aus (nicht nur Logging)
+- 🛠️ **NEU**: Modulare Aktionstypen für verschiedene Aufgaben
+- 💾 **NEU**: Automatische Backups vor allen Dateioperationen
+- 📋 **NEU**: Strukturiertes Task-Format mit expliziten Aktionen
+
+### Basis-Features
 - 🔍 Kontinuierliche Überwachung des Verzeichnisses `/ag666/instructions`
 - 🔒 Lock-Mechanismus verhindert Mehrfachverarbeitung durch Umbenennung in `.lock`
 - 📄 Automatisches Parsen und Verarbeiten von YAML-Dateien
 - 📊 Ergebnisse werden als YAML in `/ag666/results` gespeichert
 - 🛡️ Robuste Fehlerbehandlung - Script läuft auch bei fehlerhaften Dateien weiter
-- 📝 Detaillierte Logs mit Timestamps
+- 📝 Detaillierte Ausführungslogs mit Timestamps
 
 ## Sicherheit & Hinweise
 
