@@ -1,7 +1,66 @@
 #!/usr/bin/env python3
 """
-Agent Watcher - Überwacht das Verzeichnis /ag666/instructions auf neue YAML-Dateien
-und verarbeitet diese automatisch.
+AG666 Agent Watcher v3.0 - Automatisierte Task-Ausführung mit Telegram-Benachrichtigungen
+
+Dieses Skript überwacht das Verzeichnis /ag666/instructions auf neue YAML-Dateien
+und führt die darin definierten Aufgaben automatisch aus.
+
+=== SYSTEMD SERVICE SETUP ===
+
+1. Erstelle die Service-Datei: /etc/systemd/system/ag666-agent.service
+
+[Unit]
+Description=AG666 Agent Watcher Service
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/ag666
+ExecStart=/usr/bin/python3 /ag666/agent_watcher.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ag666-agent
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target
+
+2. Service aktivieren und starten:
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now ag666-agent
+   sudo systemctl status ag666-agent
+
+3. Logs anschauen:
+   sudo journalctl -u ag666-agent -f
+
+=== TELEGRAM-BENACHRICHTIGUNGEN ===
+
+Für Telegram-Benachrichtigungen benötigst du:
+1. Einen Bot-Token von @BotFather in Telegram
+2. Deine Chat-ID (erhältst du von @userinfobot)
+
+Diese Werte müssen unten im Skript eingetragen werden:
+- TELEGRAM_BOT_TOKEN = "dein-bot-token"
+- TELEGRAM_CHAT_ID = "deine-chat-id"
+
+Nach jeder Task-Ausführung wird automatisch eine Nachricht gesendet.
+
+=== ERWEITERBARKEIT ===
+
+Neue Aktionen können einfach hinzugefügt werden:
+1. Neue Methode in TaskExecutor implementieren
+2. Methode in self.action_registry eintragen
+3. YAML-Beispiel in den Kommentaren dokumentieren
+
+Beispiele für mögliche Erweiterungen:
+- Nginx-Konfiguration ändern
+- Cron-Jobs verwalten
+- Pakete installieren/updaten
+- Firewall-Regeln anpassen
 """
 
 import os
@@ -11,15 +70,49 @@ import traceback
 import subprocess
 import shutil
 import re
+import requests
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
+from ruamel.yaml import YAML
+
+# Telegram-Konfiguration
+TELEGRAM_BOT_TOKEN = "7745997286:AAE-gFci7b7xhzsy_7VcUqt7M79KJjuN6CQ"
+TELEGRAM_CHAT_ID = "5220247822"
+
+
+class TelegramNotifier:
+    """Klasse für Telegram-Benachrichtigungen"""
+    
+    def __init__(self, bot_token: str, chat_id: str):
+        self.bot_token = bot_token
+        self.chat_id = chat_id
+        self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    
+    def send_message(self, text: str) -> bool:
+        """Sendet eine Nachricht via Telegram"""
+        try:
+            data = {
+                "chat_id": self.chat_id,
+                "text": text,
+                "parse_mode": "HTML"
+            }
+            response = requests.post(self.api_url, json=data, timeout=10)
+            return response.status_code == 200
+        except Exception as e:
+            print(f"Fehler beim Senden an Telegram: {e}")
+            return False
 
 
 class TaskExecutor:
     """
     Klasse zur Ausführung verschiedener Task-Typen.
     Neue Task-Typen können hier als Methoden hinzugefügt werden.
+    
+    Beispiel für neuen Task-Typ:
+    1. Implementiere neue Methode (z.B. manage_nginx_config)
+    2. Füge sie zu self.action_registry hinzu
+    3. Dokumentiere YAML-Format in den Kommentaren
     """
     
     def __init__(self, logger):
@@ -33,7 +126,28 @@ class TaskExecutor:
             'copy_file': self.copy_file,
             'create_file': self.create_file,
             'delete_file': self.delete_file,
+            'restart_docker_container': self.restart_docker_container,
         }
+    
+    def retry_operation(self, func, *args, max_retries=3, sleep_time=2, **kwargs):
+        """
+        Führt eine Operation mit Retry-Logik aus.
+        
+        Args:
+            func: Die auszuführende Funktion
+            max_retries: Maximale Anzahl von Versuchen
+            sleep_time: Wartezeit zwischen Versuchen in Sekunden
+        """
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except IOError as e:
+                if attempt < max_retries - 1:
+                    self.logger(f"IO-Fehler bei Versuch {attempt + 1}/{max_retries}: {e}")
+                    self.logger(f"Warte {sleep_time} Sekunden vor erneutem Versuch...")
+                    time.sleep(sleep_time)
+                else:
+                    raise
     
     def execute_task(self, task_content: Dict[str, Any]) -> Tuple[bool, str, List[str]]:
         """
@@ -164,7 +278,7 @@ class TaskExecutor:
     
     def update_docker_compose_ports(self, action: Dict[str, Any]) -> Tuple[bool, str]:
         """
-        Aktualisiert Port-Mappings in einer docker-compose.yml Datei.
+        Aktualisiert Port-Mappings in einer docker-compose.yml Datei mit ruamel.yaml.
         
         Args:
             action: Dictionary mit:
@@ -182,77 +296,87 @@ class TaskExecutor:
         try:
             # Backup der Originaldatei
             backup_file = f"{filename}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            shutil.copy2(filename, backup_file)
+            self.retry_operation(shutil.copy2, filename, backup_file)
             self.logger(f"Backup erstellt: {backup_file}")
             
-            # Lese die Datei
+            # Verwende ruamel.yaml für strukturerhaltende Änderungen
+            yaml_handler = YAML()
+            yaml_handler.preserve_quotes = True
+            yaml_handler.indent(mapping=2, sequence=4, offset=2)
+            
+            # Lade die YAML-Datei
             with open(filename, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+                data = yaml_handler.load(f)
             
-            # Verarbeite die Datei
-            new_lines = []
-            in_service = False
-            in_ports = False
-            service_indent = 0
-            ports_indent = 0
-            skip_next = 0
+            # Prüfe ob Service existiert
+            if 'services' not in data:
+                return False, "Keine 'services' Sektion in der Datei gefunden"
             
-            for i, line in enumerate(lines):
-                if skip_next > 0:
-                    skip_next -= 1
-                    continue
-                
-                # Prüfe ob wir beim gewünschten Service sind
-                if f"{service}:" in line and not line.strip().startswith('#'):
-                    in_service = True
-                    service_indent = len(line) - len(line.lstrip())
-                    new_lines.append(line)
-                    continue
-                
-                # Wenn wir im Service sind
-                if in_service:
-                    current_indent = len(line) - len(line.lstrip())
-                    
-                    # Neuer Top-Level-Service gefunden? Dann sind wir fertig
-                    if current_indent <= service_indent and line.strip() and ':' in line:
-                        in_service = False
-                        in_ports = False
-                    
-                    # Ports-Sektion gefunden?
-                    elif "ports:" in line and not line.strip().startswith('#'):
-                        in_ports = True
-                        ports_indent = current_indent
-                        new_lines.append(line)
-                        
-                        # Füge neue Ports ein
-                        port_line_indent = ' ' * (ports_indent + 2)
-                        for port in new_ports:
-                            new_lines.append(f'{port_line_indent}- "{port}"\n')
-                        
-                        # Überspringe alte Port-Definitionen
-                        j = i + 1
-                        while j < len(lines):
-                            next_line = lines[j]
-                            next_indent = len(next_line) - len(next_line.lstrip())
-                            # Prüfe ob wir noch in der ports-Liste sind
-                            if next_indent > ports_indent and (next_line.strip().startswith('-') or not next_line.strip()):
-                                skip_next += 1
-                                j += 1
-                            else:
-                                break
-                        in_ports = False
-                        continue
-                
-                new_lines.append(line)
+            if service not in data['services']:
+                return False, f"Service '{service}' nicht gefunden"
             
-            # Schreibe die geänderte Datei
+            # Aktualisiere die Ports
+            self.logger(f"Aktualisiere Ports für Service '{service}'")
+            data['services'][service]['ports'] = new_ports
+            self.logger(f"Neue Ports gesetzt: {new_ports}")
+            
+            # Schreibe die Datei zurück
             with open(filename, 'w', encoding='utf-8') as f:
-                f.writelines(new_lines)
+                yaml_handler.dump(data, f)
             
+            self.logger(f"Ports für Service '{service}' erfolgreich aktualisiert.")
             return True, f"Ports für Service '{service}' erfolgreich aktualisiert"
             
         except Exception as e:
-            return False, f"Fehler beim Aktualisieren der Ports: {str(e)}"
+            error_msg = f"Fehler beim Aktualisieren der Ports: {str(e)}"
+            self.logger(f"FEHLER: {error_msg}")
+            self.logger(f"Traceback: {traceback.format_exc()}")
+            return False, error_msg
+    
+    def restart_docker_container(self, action: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        Startet einen Docker-Container neu.
+        
+        Args:
+            action: Dictionary mit:
+                - container: Name des Containers (z.B. 'traefik')
+                
+        Beispiel YAML:
+        ```yaml
+        actions:
+          - type: restart_docker_container
+            container: traefik
+        ```
+        """
+        container = action.get('container')
+        
+        if not container:
+            return False, "Kein Container-Name angegeben"
+        
+        try:
+            self.logger(f"Starte Docker-Container '{container}' neu...")
+            
+            # Führe docker restart aus
+            result = subprocess.run(
+                f"docker restart {container}",
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            if result.returncode == 0:
+                self.logger(f"Container '{container}' erfolgreich neugestartet")
+                return True, f"Container '{container}' erfolgreich neugestartet"
+            else:
+                error_msg = f"Fehler beim Neustart von Container '{container}': {result.stderr}"
+                self.logger(f"FEHLER: {error_msg}")
+                return False, error_msg
+                
+        except subprocess.TimeoutExpired:
+            return False, f"Timeout beim Neustart von Container '{container}'"
+        except Exception as e:
+            return False, f"Fehler beim Neustart: {str(e)}"
     
     def run_command(self, action: Dict[str, Any]) -> Tuple[bool, str]:
         """
@@ -310,18 +434,21 @@ class TaskExecutor:
         try:
             # Backup
             backup_file = f"{filename}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            shutil.copy2(filename, backup_file)
+            self.retry_operation(shutil.copy2, filename, backup_file)
             
-            with open(filename, 'r', encoding='utf-8') as f:
-                content = f.read()
+            def edit_operation():
+                with open(filename, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                if use_regex:
+                    new_content = re.sub(search, replace, content)
+                else:
+                    new_content = content.replace(search, replace)
+                
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
             
-            if use_regex:
-                new_content = re.sub(search, replace, content)
-            else:
-                new_content = content.replace(search, replace)
-            
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(new_content)
+            self.retry_operation(edit_operation)
             
             return True, f"Datei {filename} erfolgreich bearbeitet"
             
@@ -337,7 +464,7 @@ class TaskExecutor:
             return False, "Fehlende Parameter: source oder destination"
         
         try:
-            shutil.copy2(source, destination)
+            self.retry_operation(shutil.copy2, source, destination)
             return True, f"Datei von {source} nach {destination} kopiert"
         except Exception as e:
             return False, f"Fehler beim Kopieren: {str(e)}"
@@ -351,9 +478,12 @@ class TaskExecutor:
             return False, "Kein Dateiname angegeben"
         
         try:
-            Path(filename).parent.mkdir(parents=True, exist_ok=True)
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(content)
+            def create_operation():
+                Path(filename).parent.mkdir(parents=True, exist_ok=True)
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            
+            self.retry_operation(create_operation)
             return True, f"Datei {filename} erstellt"
         except Exception as e:
             return False, f"Fehler beim Erstellen: {str(e)}"
@@ -369,7 +499,7 @@ class TaskExecutor:
             if os.path.exists(filename):
                 # Backup vor dem Löschen
                 backup_file = f"{filename}.deleted.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                shutil.move(filename, backup_file)
+                self.retry_operation(shutil.move, filename, backup_file)
                 return True, f"Datei {filename} gelöscht (Backup: {backup_file})"
             else:
                 return False, f"Datei {filename} existiert nicht"
@@ -398,14 +528,40 @@ class AgentWatcher:
         # Task Executor initialisieren
         self.task_executor = TaskExecutor(self.log)
         
-        self.log(f"AgentWatcher gestartet - Überwache: {self.watch_dir}")
+        # Telegram Notifier initialisieren
+        self.telegram = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+        
+        self.log(f"AgentWatcher v3.0 gestartet - Überwache: {self.watch_dir}")
         self.log(f"Ergebnisse werden gespeichert in: {self.result_dir}")
         self.log(f"Verfügbare Aktionen: {', '.join(self.task_executor.action_registry.keys())}")
+        
+        # Teste Telegram-Verbindung
+        if self.telegram.send_message("🚀 AG666 Agent Watcher gestartet!"):
+            self.log("Telegram-Benachrichtigungen aktiviert")
+        else:
+            self.log("WARNUNG: Telegram-Benachrichtigungen nicht konfiguriert oder fehlerhaft")
     
     def log(self, message):
         """Gibt eine Log-Nachricht mit Timestamp aus."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] {message}")
+    
+    def send_task_notification(self, task_name: str, success: bool, summary: str, error: Optional[str] = None):
+        """Sendet eine Telegram-Benachrichtigung über Task-Ausführung"""
+        status_emoji = "✅" if success else "❌"
+        status_text = "Erfolgreich" if success else "Fehlgeschlagen"
+        
+        message = f"<b>{status_emoji} Task-Ausführung</b>\n\n"
+        message += f"<b>Task:</b> {task_name}\n"
+        message += f"<b>Status:</b> {status_text}\n"
+        message += f"<b>Zusammenfassung:</b> {summary}\n"
+        
+        if error:
+            message += f"<b>Fehler:</b> <code>{error}</code>\n"
+        
+        message += f"\n<b>Zeit:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        self.telegram.send_message(message)
     
     def find_new_yaml_files(self):
         """
@@ -446,6 +602,11 @@ class AgentWatcher:
             self.log(f"Fehler beim Sperren der Datei {yaml_file.name}: {e}")
             return
         
+        task_name = yaml_file.stem
+        success = False
+        summary = ""
+        error_msg = None
+        
         # YAML-Inhalt lesen und parsen
         try:
             with open(lock_file, 'r', encoding='utf-8') as f:
@@ -454,7 +615,11 @@ class AgentWatcher:
             self.log(f"YAML-Inhalt von {yaml_file.name}:")
             print(f"  {content}")
             
-            # Führe den Task aus (nicht mehr nur simulieren!)
+            # Task-Name extrahieren
+            if isinstance(content, dict) and 'task' in content:
+                task_name = content['task']
+            
+            # Führe den Task aus
             self.log("Führe Task aus...")
             success, summary, execution_logs = self.task_executor.execute_task(content)
             
@@ -471,16 +636,30 @@ class AgentWatcher:
             self.save_result(yaml_file.stem, result)
             
         except yaml.YAMLError as e:
+            error_msg = f"YAML-Parse-Fehler: {str(e)}"
             self.log(f"Fehler beim Parsen der YAML-Datei {lock_file.name}: {e}")
-            result = self.create_result(yaml_file.name, None, success=False, 
-                                      error=f"YAML-Parse-Fehler: {str(e)}")
+            result = self.create_result(yaml_file.name, None, success=False, error=error_msg)
             self.save_result(yaml_file.stem, result)
+            summary = "YAML-Parse-Fehler"
+            
         except Exception as e:
+            error_msg = f"Verarbeitungsfehler: {str(e)}"
             self.log(f"Unerwarteter Fehler bei der Verarbeitung von {lock_file.name}: {e}")
             self.log(f"Traceback: {traceback.format_exc()}")
-            result = self.create_result(yaml_file.name, None, success=False, 
-                                      error=f"Verarbeitungsfehler: {str(e)}")
+            result = self.create_result(yaml_file.name, None, success=False, error=error_msg)
             self.save_result(yaml_file.stem, result)
+            summary = "Unerwarteter Fehler"
+            
+            # Bei Fehler: Lock-Datei löschen für erneuten Versuch
+            try:
+                if lock_file.exists():
+                    lock_file.unlink()
+                    self.log(f"Lock-Datei {lock_file.name} gelöscht für erneuten Versuch")
+            except Exception as del_e:
+                self.log(f"Fehler beim Löschen der Lock-Datei: {del_e}")
+        
+        # Sende Telegram-Benachrichtigung
+        self.send_task_notification(task_name, success, summary, error_msg)
     
     def create_result(self, filename, content, success=True, error=None, summary=None, execution_logs=None):
         """
@@ -555,16 +734,18 @@ class AgentWatcher:
                 
         except KeyboardInterrupt:
             self.log("Überwachung durch Benutzer beendet")
+            self.telegram.send_message("🛑 AG666 Agent Watcher beendet")
         except Exception as e:
             self.log(f"Kritischer Fehler in der Hauptschleife: {e}")
             self.log(f"Traceback: {traceback.format_exc()}")
+            self.telegram.send_message(f"💥 AG666 Agent Watcher abgestürzt!\n\nFehler: {str(e)}")
             raise
 
 
 def main():
     """Hauptfunktion zum Starten des Agent Watchers."""
-    print("=== Agent Watcher v2.0 ===")
-    print("NEU: Führt Tasks jetzt wirklich auf dem Server aus!")
+    print("=== Agent Watcher v3.0 ===")
+    print("NEU: Telegram-Benachrichtigungen & Docker-Container-Restart")
     print("Drücke Ctrl+C zum Beenden\n")
     
     watcher = AgentWatcher()

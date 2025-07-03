@@ -1,0 +1,5 @@
+# Beispiel für Docker-Container-Neustart
+task: "Traefik Container neu starten"
+actions:
+  - type: restart_docker_container
+    container: traefik
