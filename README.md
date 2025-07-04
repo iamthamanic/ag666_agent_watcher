@@ -231,6 +231,149 @@ Die Idee ist, wiederholbare, dokumentierte DevOps/Automatisierungen zu ermöglic
 - Einbindung von Monitoring, Healthchecks und Self-Healing via Agent denkbar
 - Kompatibel mit jedem modernen CI/CD-Prozess
 
+## Das AG666 Master-Handbuch: Deine persönliche Server-Automationsplattform
+
+### 1. Die Philosophie und das Konzept
+
+**Das Ziel:** Du musst dich nie wieder per SSH einloggen, um Routineaufgaben zu erledigen. Du sprichst mit einer KI (Claude), diese erstellt eine Arbeitsanweisung (YAML), und dein Server führt sie autonom aus. Du bekommst nur noch das Ergebnis per Telegram.
+
+#### Die drei Säulen deines Systems:
+
+**Claude in Cursor (Der Architekt):**
+- **Rolle:** Dein kreativer Partner. Er übersetzt deine Ziele ("Ich will Projekt X deployen") in eine exakte, maschinenlesbare Blaupause (die YAML-Datei).
+- **Standort:** Lokal auf deinem Mac.
+- **Output:** Eine .yaml-Datei, die er im Ordner ~/ag666_tasks auf deinem Mac ablegt.
+
+**Syncthing (Der Logistiker):**
+- **Rolle:** Der vollautomatische, unsichtbare Kurier. Er bemerkt jede neue oder geänderte Datei in ~/ag666_tasks auf deinem Mac und transportiert sie sofort und verschlüsselt zum Server.
+- **Standort:** Läuft als Dienst auf Mac und Server.
+- **Output:** Eine exakte Kopie der Datei im "Eingangskorb" des Agenten auf dem Server: /ag666/instructions.
+
+**AG666 Agent (Der Executor):**
+- **Rolle:** Der zuverlässige Arbeiter auf dem Server. Er schaut nur in seinen Eingangskorb (/ag666/instructions). Findet er eine neue Anweisung, führt er sie ohne Nachfragen aus.
+- **Standort:** Läuft als systemd-Dienst permanent auf deinem Hetzner-Server.
+- **Output:** Eine Ergebnis-Datei in /ag666/results und eine Status-Benachrichtigung per Telegram.
+
+### 2. Der Standard-Workflow: Von der Idee zur Ausführung
+
+#### Schritt 1: Formuliere den Auftrag für Claude (im Cursor-Chat)
+
+Sei so präzise wie möglich. Eine gute Formel ist: **ZIEL, AKTION, PARAMETER, SPEICHERORT.**
+
+**Beispiel-Prompt (simpel):**
+```
+Erstelle mir einen AG666-Task als YAML, der den Docker-Container hrthis-db neustartet. 
+Nutze die Aktion restart_docker_container. 
+Speichere die Datei bitte als restart_db.yaml in meinem lokalen Ordner ~/ag666_tasks.
+```
+
+**Beispiel-Prompt (komplex):**
+```
+Erstelle einen AG666-Task mit mehreren Aktionen. Zuerst soll die Datei /etc/nginx/nginx.conf 
+gesichert werden, indem sie nach /etc/nginx/nginx.conf.bak kopiert wird. Danach soll in der 
+Originaldatei der Wert worker_processes 4; durch worker_processes auto; ersetzt werden. 
+Zum Schluss soll der Befehl systemctl reload nginx ausgeführt werden. 
+Speichere das als optimize_nginx.yaml in ~/ag666_tasks.
+```
+
+#### Schritt 2: Claude die YAML generieren und speichern lassen
+
+**Beispiel-YAML für den komplexen Prompt:**
+```yaml
+task: "Nginx-Konfiguration optimieren und neuladen"
+actions:
+  - type: copy_file
+    source: /etc/nginx/nginx.conf
+    destination: /etc/nginx/nginx.conf.bak
+  - type: edit_file
+    file: /etc/nginx/nginx.conf
+    search: "worker_processes 4;"
+    replace: "worker_processes auto;"
+  - type: run_command
+    command: "systemctl reload nginx"
+```
+
+#### Schritt 3: Zurücklehnen und auf Telegram warten
+
+In dem Moment, in dem die Datei in ~/ag666_tasks gespeichert wird, beginnt die Kette:
+**Syncthing → Server → AG666 Agent → Telegram.**
+
+### 3. Fehlerbehandlung: Was tun, wenn etwas schiefgeht?
+
+#### Szenario 1: Es kommt keine Telegram-Nachricht an
+
+**Ist der Postbote im Dienst?**
+- Check: Funktioniert Syncthing? Öffne die beiden Web-UIs (Mac und Server via Tunnel).
+- Fix: `brew services restart syncthing` auf dem Mac, `sudo systemctl restart syncthing@root.service` auf dem Server.
+
+**Ist der Arbeiter im Dienst?**
+- Check: `sudo systemctl status ag666-agent`
+- Fix: `sudo systemctl restart ag666-agent`
+
+**Ist die Anweisung angekommen?**
+- Check: `ls -l /ag666/instructions/`
+
+#### Szenario 2: Es kommt eine FEHLER-Nachricht in Telegram
+
+Das ist ein gutes Zeichen! Der Agent hat gearbeitet, aber etwas ist schiefgelaufen.
+
+1. Lies die Fehlermeldung in Telegram
+2. Schau in die Ergebnis-Datei: `cat /ag666/results/dein_task_name.yaml`
+3. Achte auf die Felder `summary`, `error` und `execution_logs`
+4. Behebe die Ursache und lasse Claude eine korrigierte YAML erstellen
+
+### 4. Die Werkzeugkiste: Deine verfügbaren Aktionen
+
+| Aktionstyp | Beschreibung | Beispiel-Parameter |
+|------------|--------------|-------------------|
+| `run_command` | Führt einen beliebigen Shell-Befehl aus | `command: "docker ps -a"` |
+| `restart_docker_container` | Startet einen Docker-Container neu | `container: hrthis-backend` |
+| `update_docker_compose_ports` | Ändert Ports in docker-compose.yml | `file: path/to/compose.yml, service: traefik, port_mappings: ["8081:80", "8082:443"]` |
+| `edit_file` | Sucht und ersetzt Text in einer Datei | `file: path/to/file.txt, search: "alt", replace: "neu"` |
+| `create_file` | Erstellt eine neue Datei mit Inhalt | `file: path/to/new_file.txt, content: "Hallo Welt"` |
+| `copy_file` | Kopiert eine Datei | `source: path/to/source, destination: path/to/dest` |
+| `delete_file` | Löscht eine Datei (erstellt vorher ein Backup) | `file: path/to/file_to_delete.txt` |
+
+### 5. Das ultimative AG666-Prompt-Template für Claude
+
+```
+Du bist mein persönlicher DevOps-Agent für mein AG666-System. Deine Aufgabe ist es, eine präzise und fehlerfreie YAML-Taskdatei zu erstellen, die mein agent_watcher.py auf dem Server ausführen kann.
+
+**1. Kontext und Ziel:**
+Ich möchte [HIER DAS ZIEL IN KLARTEXT BESCHREIBEN].
+
+**2. Benötigte Aktionen:**
+Führe die folgenden Aktionen in exakt dieser Reihenfolge aus:
+
+* **Aktion 1:** [BESCHREIBUNG]
+  * **Typ:** `[AKTIONSTYP]`
+  * **Parameter:** [PARAMETER]
+
+**3. Formatierungs-Anweisungen:**
+* Erstelle eine einzelne YAML-Datei
+* Gib der Aufgabe einen klaren Namen im `task`-Feld
+* Stelle sicher, dass die YAML-Syntax zu 100% korrekt ist
+
+**4. Speicherort und Dateiname:**
+Speichere die fertige YAML-Datei in `~/ag666_tasks` unter dem Dateinamen `[DATEINAME].yaml`.
+
+Gib mir nur den reinen YAML-Code als finale Antwort zurück, ohne zusätzliche Erklärungen.
+```
+
+### 6. Syncthing-Verbindung lost - Was tun?
+
+Die Fehlermeldung `ERR_CONNECTION_REFUSED` bei `http://127.0.0.1:9090` bedeutet: Der SSH-Tunnel ist nicht mehr aktiv.
+
+**Reparatur:**
+1. Öffne ein neues Mac-Terminal-Fenster
+2. Gib ein: `ssh -L 9090:127.0.0.1:8384 root@[DEINE-SERVER-IP]`
+3. Lasse das Terminal-Fenster offen während der Arbeit
+4. Lade `http://127.0.0.1:9090` im Browser neu
+
+**Merke dir:**
+- `http://127.0.0.1:8384` → Syncthing auf deinem Mac (immer verfügbar)
+- `http://127.0.0.1:9090` → Syncthing auf dem Server (nur mit SSH-Tunnel)
+
 ## Viel Spaß beim Automatisieren!
 
 Fragen, Bugs oder Erweiterungswünsche gerne via Issue oder direkt an den Maintainer.
