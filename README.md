@@ -47,22 +47,45 @@ Alles, was du per Bash, Docker, Git, etc. erledigen würdest, kann in YAML besch
 
 ## Schnellstart: Agent Watcher installieren
 
-### 1. Python & Abhängigkeiten installieren
+### 1. Telegram-Bot einrichten
+
+**Schritt 1: Bot erstellen**
+1. Öffne Telegram und suche nach `@BotFather`
+2. Sende ihm `/newbot`
+3. Gib deinem Bot einen Namen (z.B. "AG666 Server Watcher")
+4. Gib einen Username (muss auf `bot` enden, z.B. `ag666_watcher_bot`)
+5. Du erhältst einen **Bot-Token** (sieht so aus: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+**Schritt 2: Chat-ID herausfinden**
+1. Sende eine Nachricht an deinen neuen Bot
+2. Öffne im Browser: `https://api.telegram.org/bot[DEIN-BOT-TOKEN]/getUpdates`
+3. Suche nach `"chat":{"id":` - das ist deine **Chat-ID**
+4. Alternative: Nutze `@userinfobot` in Telegram
+
+**Schritt 3: Token im Script eintragen**
+Öffne `agent_watcher.py` und ersetze:
+```python
+TELEGRAM_BOT_TOKEN = "7745997286:AAE-gFci7b7xhzsy_7VcUqt7M79KJjuN6CQ"
+TELEGRAM_CHAT_ID = "5220247822"
+```
+mit deinen eigenen Werten.
+
+### 2. Python & Abhängigkeiten installieren
 
 ```bash
 sudo apt update
 sudo apt install python3 python3-pip
-pip3 install pyyaml
+pip3 install pyyaml requests ruamel.yaml
 ```
 
-### 2. Ordnerstruktur anlegen
+### 3. Ordnerstruktur anlegen
 
 ```bash
 sudo mkdir -p /ag666/instructions /ag666/results /ag666/logs
 sudo chown -R <dein_user>:<dein_user> /ag666
 ```
 
-### 3. Agent Watcher Script kopieren
+### 4. Agent Watcher Script kopieren
 
 agent_watcher.py auf den Server legen, z.B. nach `/ag666/`
 
@@ -71,7 +94,7 @@ Ausführbar machen:
 chmod +x /ag666/agent_watcher.py
 ```
 
-### 4. Agent Watcher starten
+### 5. Agent Watcher starten
 
 ```bash
 cd /ag666
@@ -80,7 +103,7 @@ python3 agent_watcher.py
 
 Der Agent läuft jetzt und wartet auf YAML-Dateien im instructions-Ordner.
 
-### 5. Eine Test-Instruktion ausführen
+### 6. Eine Test-Instruktion ausführen
 
 Lege z.B. eine Datei `test.yaml` in `/ag666/instructions` ab:
 

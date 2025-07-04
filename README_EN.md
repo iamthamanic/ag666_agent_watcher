@@ -47,22 +47,45 @@ Everything you would do via Bash, Docker, Git, etc., can be described in YAML an
 
 ## Quick Start: Install Agent Watcher
 
-### 1. Install Python & Dependencies
+### 1. Set up Telegram Bot
+
+**Step 1: Create Bot**
+1. Open Telegram and search for `@BotFather`
+2. Send `/newbot`
+3. Give your bot a name (e.g., "AG666 Server Watcher")
+4. Give a username (must end with `bot`, e.g., `ag666_watcher_bot`)
+5. You'll receive a **Bot Token** (looks like: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+**Step 2: Find Chat ID**
+1. Send a message to your new bot
+2. Open in browser: `https://api.telegram.org/bot[YOUR-BOT-TOKEN]/getUpdates`
+3. Look for `"chat":{"id":` - that's your **Chat ID**
+4. Alternative: Use `@userinfobot` in Telegram
+
+**Step 3: Enter Token in Script**
+Open `agent_watcher.py` and replace:
+```python
+TELEGRAM_BOT_TOKEN = "7745997286:AAE-gFci7b7xhzsy_7VcUqt7M79KJjuN6CQ"
+TELEGRAM_CHAT_ID = "5220247822"
+```
+with your own values.
+
+### 2. Install Python & Dependencies
 
 ```bash
 sudo apt update
 sudo apt install python3 python3-pip
-pip3 install pyyaml
+pip3 install pyyaml requests ruamel.yaml
 ```
 
-### 2. Create Directory Structure
+### 3. Create Directory Structure
 
 ```bash
 sudo mkdir -p /ag666/instructions /ag666/results /ag666/logs
 sudo chown -R <your_user>:<your_user> /ag666
 ```
 
-### 3. Copy Agent Watcher Script
+### 4. Copy Agent Watcher Script
 
 Place agent_watcher.py on the server, e.g., to `/ag666/`
 
@@ -71,7 +94,7 @@ Make it executable:
 chmod +x /ag666/agent_watcher.py
 ```
 
-### 4. Start Agent Watcher
+### 5. Start Agent Watcher
 
 ```bash
 cd /ag666
@@ -80,7 +103,7 @@ python3 agent_watcher.py
 
 The agent is now running and waiting for YAML files in the instructions folder.
 
-### 5. Execute a Test Instruction
+### 6. Execute a Test Instruction
 
 For example, place a file `test.yaml` in `/ag666/instructions`:
 
